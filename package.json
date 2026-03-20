@@ -1,5 +1,5 @@
 {
-  "name": "kaka-amplifier",
+  "name": "content-amplifier-hub",
   "version": "1.0.0",
   "description": "Social Media Amplification Cooperative Engine",
   "main": "dist/index.js",
