@@ -71,3 +71,65 @@ export const submitBoost = async (memberId: number, contentUrl: string, platform
         throw error;
     }
 };
+
+// Get boosts that are approved and whose hour_slot matches the current hour
+export const getLiveBoosts = async (limit: number = 20) => {
+    const now = new Date();
+    const currentHour = new Date(now);
+    currentHour.setMinutes(0, 0, 0);
+
+    const result = await db.query(
+        `SELECT id, member_id, content_url, platform, category, impressions_count, clicks_count, confirmed_supports_count
+         FROM boosts
+         WHERE status = 'approved' AND hour_slot = $1
+         ORDER BY submitted_at ASC
+         LIMIT $2`,
+        [currentHour, limit]
+    );
+    return result.rows;
+};
+
+// Record that a member clicked "Support Now" (increments clicks_count)
+export const recordSupportClick = async (boostId: number, memberId: number) => {
+    await db.query(
+        `UPDATE boosts SET clicks_count = clicks_count + 1 WHERE id = $1`,
+        [boostId]
+    );
+    return { success: true };
+};
+
+// Record that a member confirmed they supported (liked, commented, etc.)
+export const recordConfirmedSupport = async (boostId: number, memberId: number) => {
+    // Check if this member already confirmed this boost
+    const existing = await db.query(
+        `SELECT id FROM support_log WHERE boost_id = $1 AND member_id = $2 AND confirmed = true`,
+        [boostId, memberId]
+    );
+    if (existing.rows.length > 0) {
+        return { success: false, message: "You have already supported this boost." };
+    }
+
+    await db.query('BEGIN');
+    try {
+        // Insert into support_log
+        await db.query(
+            `INSERT INTO support_log (boost_id, member_id, confirmed) VALUES ($1, $2, true)`,
+            [boostId, memberId]
+        );
+        // Increment confirmed_supports_count on the boost
+        await db.query(
+            `UPDATE boosts SET confirmed_supports_count = confirmed_supports_count + 1 WHERE id = $1`,
+            [boostId]
+        );
+        // Increment supports_given on the member
+        await db.query(
+            `UPDATE members SET supports_given = supports_given + 1 WHERE id = $1`,
+            [memberId]
+        );
+        await db.query('COMMIT');
+        return { success: true };
+    } catch (error) {
+        await db.query('ROLLBACK');
+        throw error;
+    }
+};
