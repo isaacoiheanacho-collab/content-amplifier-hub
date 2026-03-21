@@ -26,7 +26,8 @@ export const submitBoost = async (memberId: number, contentUrl: string, platform
         // 2. Find next available hourly slot (max 500 per hour)
         const maxHourlyQueue = parseInt(process.env.MAX_HOURLY_QUEUE || '500');
         const slotCheck = await db.query(`
-            SELECT hour_slot FROM (
+            SELECT slots.hour_slot
+            FROM (
                 SELECT generate_series(
                     date_trunc('hour', now()), 
                     date_trunc('hour', now()) + interval '24 hours', 
@@ -36,7 +37,8 @@ export const submitBoost = async (memberId: number, contentUrl: string, platform
             LEFT JOIN boosts ON boosts.hour_slot = slots.hour_slot
             GROUP BY slots.hour_slot
             HAVING count(boosts.id) < $1
-            ORDER BY slots.hour_slot LIMIT 1
+            ORDER BY slots.hour_slot
+            LIMIT 1
         `, [maxHourlyQueue]);
 
         if (slotCheck.rows.length === 0) {
@@ -66,6 +68,6 @@ export const submitBoost = async (memberId: number, contentUrl: string, platform
         }
     } catch (error) {
         console.error('Error in submitBoost:', error);
-        throw error; // Let the route handler catch and log
+        throw error;
     }
 };
