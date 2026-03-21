@@ -1,6 +1,6 @@
-import { db } from '../models/db'; // Using your corrected central connection
+import { db } from '../models/db';
 
-export const submitBoost = async (memberId: number, contentUrl: string, platform: string) => {
+export const submitBoost = async (memberId: number, contentUrl: string, platform: string, category: string) => {
     // 1. Check if member has reached their 20-link monthly limit
     const memberCheck = await db.query(
         'SELECT monthly_boosts_used, membership_active FROM members WHERE id = $1',
@@ -18,7 +18,6 @@ export const submitBoost = async (memberId: number, contentUrl: string, platform
     }
 
     // 2. Find the next available hourly slot (max 500 links per hour)
-    // We look for the first hour from 'now' that has fewer than 500 entries
     const slotCheck = await db.query(`
         SELECT hour_slot FROM (
             SELECT generate_series(
@@ -36,11 +35,12 @@ export const submitBoost = async (memberId: number, contentUrl: string, platform
     const availableSlot = slotCheck.rows[0].hour_slot;
 
     // 3. Insert the boost and increment the member's counter
-    await db.query('BEGIN'); // Start transaction for safety
+    await db.query('BEGIN');
     try {
+        // Include category in the INSERT
         await db.query(
-            'INSERT INTO boosts (member_id, content_url, platform, hour_slot) VALUES ($1, $2, $3, $4)',
-            [memberId, contentUrl, platform, availableSlot]
+            'INSERT INTO boosts (member_id, content_url, platform, category, hour_slot) VALUES ($1, $2, $3, $4, $5)',
+            [memberId, contentUrl, platform, category, availableSlot]
         );
         
         await db.query(
