@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { db } from '../models/db';
 
 // Amounts from environment
@@ -5,50 +6,61 @@ const EARLY_BIRD_FEE = parseInt(process.env.EARLY_BIRD_FEE || '5000');
 const STANDARD_FEE = parseInt(process.env.STANDARD_FEE || '20000');
 const MAINTENANCE_FEE = parseInt(process.env.MONTHLY_MAINTENANCE_FEE || '500');
 
-// Determine which fee applies to a member
+const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY!;
+const BASE_URL = process.env.BASE_URL || 'https://content-amplifier-hub.onrender.com';
+
 export const getMemberFee = async (memberId: number): Promise<number> => {
     const result = await db.query('SELECT is_early_bird FROM members WHERE id = $1', [memberId]);
     const isEarlyBird = result.rows[0]?.is_early_bird;
     return isEarlyBird ? EARLY_BIRD_FEE : STANDARD_FEE;
 };
 
-// Create a checkout session with Stripe (or Paystack)
-export const createCheckoutSession = async (memberId: number, amount: number, type: 'registration' | 'maintenance') => {
-    // TODO: Replace with actual Stripe or Paystack integration.
-    // Example using Stripe:
-    // const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-    // const session = await stripe.checkout.sessions.create({
-    //     payment_method_types: ['card'],
-    //     line_items: [{ price_data: { currency: 'ngn', unit_amount: amount, product_data: { name: 'Membership' } }, quantity: 1 }],
-    //     mode: 'payment',
-    //     success_url: `https://yourapp.com/success?session_id={CHECKOUT_SESSION_ID}`,
-    //     cancel_url: `https://yourapp.com/cancel`,
-    //     metadata: { memberId, type }
-    // });
-    // return session.url;
+export const createPaystackTransaction = async (memberId: number, amount: number, type: 'registration' | 'maintenance') => {
+    // Get member email
+    const memberResult = await db.query('SELECT email FROM members WHERE id = $1', [memberId]);
+    const email = memberResult.rows[0]?.email;
+    if (!email) throw new Error('Member not found');
 
-    // For now, return a message and log
-    console.log(`[PAYMENT] Member ${memberId} would pay ${amount} for ${type}`);
-    return null; // In production, return the checkout URL
+    const response = await axios.post(
+        'https://api.paystack.co/transaction/initialize',
+        {
+            email,
+            amount: amount * 100, // Paystack uses kobo/cents
+            metadata: { memberId, type },
+            callback_url: `${BASE_URL}/auth/payment/callback`, // must match your route
+        },
+        {
+            headers: {
+                Authorization: `Bearer ${PAYSTACK_SECRET}`,
+                'Content-Type': 'application/json',
+            },
+        }
+    );
+
+    if (response.data.status) {
+        return response.data.data.authorization_url;
+    } else {
+        throw new Error(response.data.message || 'Paystack initialization failed');
+    }
 };
 
-// Webhook handler for payment confirmation
-export const handlePaymentWebhook = async (payload: any, signature: string) => {
-    // TODO: Verify signature (Stripe uses 'stripe-signature' header)
-    // const event = stripe.webhooks.constructEvent(payload, signature, process.env.STRIPE_WEBHOOK_SECRET);
-    // if (event.type === 'checkout.session.completed') {
-    //     const session = event.data.object;
-    //     const memberId = session.metadata.memberId;
-    //     const amount = session.amount_total;
-    //     const type = session.metadata.type;
-    //     await activateMembership(memberId, amount, type, session.id);
-    // }
+export const verifyPaystackTransaction = async (reference: string) => {
+    const response = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
+        headers: {
+            Authorization: `Bearer ${PAYSTACK_SECRET}`,
+        },
+    });
 
-    console.log('[PAYMENT] Webhook received, would activate membership');
-    return { received: true };
+    if (response.data.status && response.data.data.status === 'success') {
+        const { metadata, amount } = response.data.data;
+        const memberId = metadata.memberId;
+        const type = metadata.type;
+        await activateMembership(memberId, amount / 100, type, reference);
+        return { success: true };
+    }
+    return { success: false, message: 'Payment not successful' };
 };
 
-// Activate membership after successful payment
 export const activateMembership = async (memberId: number, amount: number, paymentType: string, transactionRef: string) => {
     try {
         await db.query('BEGIN');
@@ -63,6 +75,7 @@ export const activateMembership = async (memberId: number, amount: number, payme
             expiryDate.setFullYear(expiryDate.getFullYear() + 1);
         }
 
+        // Update member
         await db.query(
             `UPDATE members 
              SET membership_active = true, 
@@ -71,6 +84,7 @@ export const activateMembership = async (memberId: number, amount: number, payme
             [expiryDate, memberId]
         );
 
+        // Record payment
         await db.query(
             `INSERT INTO payments (member_id, amount, payment_type, transaction_reference) 
              VALUES ($1, $2, $3, $4)`,
