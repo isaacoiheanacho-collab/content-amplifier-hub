@@ -1,5 +1,6 @@
 import { db } from '../models/db';
 import cron from 'node-cron';
+import { sendNotificationToAll } from './notificationService';
 
 const MAX_HOURLY_QUEUE = parseInt(process.env.MAX_HOURLY_QUEUE || '500');
 
@@ -7,12 +8,10 @@ const MAX_HOURLY_QUEUE = parseInt(process.env.MAX_HOURLY_QUEUE || '500');
 cron.schedule('0 * * * *', async () => {
     console.log('Running hourly engine...');
     try {
-        // Get the current hour (rounded down)
         const now = new Date();
         const currentHour = new Date(now);
         currentHour.setMinutes(0, 0, 0);
 
-        // Find up to MAX_HOURLY_QUEUE queued boosts, oldest first
         const queuedBoosts = await db.query(
             `SELECT id FROM boosts 
              WHERE status = 'queued' 
@@ -28,7 +27,6 @@ cron.schedule('0 * * * *', async () => {
 
         const boostIds = queuedBoosts.rows.map(row => row.id);
 
-        // Update them to approved, set hour_slot to current hour
         await db.query(
             `UPDATE boosts 
              SET status = 'approved', hour_slot = $1 
@@ -38,7 +36,8 @@ cron.schedule('0 * * * *', async () => {
 
         console.log(`Approved ${boostIds.length} boosts for hour ${currentHour.toISOString()}`);
 
-        // TODO: Trigger push notifications (will be added later)
+        // Send push notifications to all members with tokens
+        await sendNotificationToAll('New Boosts Live', 'Support your fellow creators now!');
     } catch (err) {
         console.error('Hourly engine failed:', err);
     }
