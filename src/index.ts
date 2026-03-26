@@ -2,6 +2,7 @@ import express from 'express';
 import * as dotenv from 'dotenv';
 import boostRoutes from './routes/boostRoutes';
 import authRoutes from './routes/authRoutes';
+import memberRoutes from './routes/memberRoutes';
 import './services/hourlyEngine';
 
 dotenv.config();
@@ -9,7 +10,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Capture raw body for Paystack webhook (must come before express.json)
+// Capture raw body for Paystack webhook
 app.use('/auth/paystack-webhook', (req, res, next) => {
     let data = '';
     req.on('data', chunk => { data += chunk; });
@@ -27,6 +28,7 @@ app.get('/', (req, res) => {
 
 app.use('/auth', authRoutes);
 app.use('/boosts', boostRoutes);
+app.use('/member', memberRoutes);
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
