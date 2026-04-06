@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { db } from '../models/db';
+import cloudinary from '../utils/cloudinary';
+import { upload } from '../utils/multer';
 
 const router = Router();
 
@@ -157,6 +159,43 @@ router.post('/profile/update', authenticate, async (req: AuthRequest, res) => {
     );
 
     res.json({ success: true });
+});
+
+/**
+ * POST /member/profile/upload-photo
+ * Uploads a profile photo to Cloudinary and updates DB
+ */
+router.post('/profile/upload-photo', authenticate, upload.single('photo'), async (req: AuthRequest, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+
+        const uploadStream = cloudinary.uploader.upload_stream(
+            { folder: 'profile_photos' },
+            async (error, result) => {
+                if (error || !result) {
+                    console.error(error);
+                    return res.status(500).json({ error: 'Cloudinary upload failed' });
+                }
+
+                const imageUrl = result.secure_url;
+
+                await db.query(
+                    `UPDATE members SET profile_photo_url = $1 WHERE id = $2`,
+                    [imageUrl, req.user.id]
+                );
+
+                return res.json({ url: imageUrl });
+            }
+        );
+
+        uploadStream.end(req.file.buffer);
+
+    } catch (error) {
+        console.error("Photo Upload Error:", error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
 });
 
 export default router;
