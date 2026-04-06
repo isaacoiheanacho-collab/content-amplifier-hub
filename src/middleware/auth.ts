@@ -3,6 +3,12 @@ import jwt from 'jsonwebtoken';
 
 export interface AuthRequest extends Request {
   user?: any;
+
+  // Multer single-file upload
+  file?: Express.Multer.File;
+
+  // Multer multi-file upload (supports both array and object map)
+  files?: Express.Multer.File[] | { [fieldname: string]: Express.Multer.File[] };
 }
 
 export const authenticate = (req: AuthRequest, res: Response, next: NextFunction) => {
