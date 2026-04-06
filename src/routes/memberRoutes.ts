@@ -5,12 +5,44 @@ import { db } from '../models/db';
 const router = Router();
 
 /**
- * GET /member/stats
- * Existing endpoint — unchanged
+ * GET /member/maintenance-status/:id
+ * Checks if the member is within their 6-month grace period or monthly window
  */
+router.get('/maintenance-status/:id', authenticate, async (req: AuthRequest, res) => {
+    const { id } = req.params;
+
+    try {
+        const result = await db.query(
+            'SELECT next_maintenance_due, membership_active FROM members WHERE id = $1',
+            [id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Member not found' });
+        }
+
+        const member = result.rows[0];
+        const now = new Date();
+        const nextDue = member.next_maintenance_due;
+
+        // Logic: Allowed if membership is active AND (no due date set yet OR current date is before due date)
+        const isAllowed = member.membership_active && nextDue ? (now < new Date(nextDue)) : false;
+
+        res.json({
+            allowed: isAllowed,
+            nextDue: nextDue,
+            reason: isAllowed 
+                ? "Maintenance Fee is Up to Date" 
+                : "Your monthly maintenance fee of ₦500 is due."
+        });
+    } catch (error) {
+        console.error("Maintenance Status Error:", error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 router.get('/stats', authenticate, async (req: AuthRequest, res) => {
     const memberId = req.user.id;
-
     const memberResult = await db.query(
         'SELECT email, membership_active, monthly_boosts_used, supports_given FROM members WHERE id = $1',
         [memberId]
@@ -21,13 +53,10 @@ router.get('/stats', authenticate, async (req: AuthRequest, res) => {
     }
 
     const member = memberResult.rows[0];
-
     const supportsReceivedResult = await db.query(
         'SELECT COALESCE(SUM(confirmed_supports_count), 0) as total FROM boosts WHERE member_id = $1',
         [memberId]
     );
-
-    const supportsReceived = supportsReceivedResult.rows[0].total;
 
     res.json({
         email: member.email,
@@ -35,32 +64,21 @@ router.get('/stats', authenticate, async (req: AuthRequest, res) => {
         monthly_boosts_used: member.monthly_boosts_used,
         max_monthly_boosts: process.env.MAX_MONTHLY_BOOSTS || 20,
         supports_given: member.supports_given,
-        supports_received: supportsReceived,
+        supports_received: supportsReceivedResult.rows[0].total,
     });
 });
 
-/**
- * GET /member/boosts
- * Existing endpoint — unchanged
- */
 router.get('/boosts', authenticate, async (req: AuthRequest, res) => {
     const memberId = req.user.id;
-
     const boosts = await db.query(
         `SELECT * FROM boosts WHERE member_id = $1 ORDER BY submitted_at DESC`,
         [memberId]
     );
-
     res.json(boosts.rows);
 });
 
-/**
- * NEW: GET /member/profile
- * Returns full profile including new fields
- */
 router.get('/profile', authenticate, async (req: AuthRequest, res) => {
     const memberId = req.user.id;
-
     const result = await db.query(
         `SELECT email, name, phone, region, profile_photo_url,
                 membership_active, monthly_boosts_used, supports_given
@@ -68,11 +86,7 @@ router.get('/profile', authenticate, async (req: AuthRequest, res) => {
         [memberId]
     );
 
-    if (result.rows.length === 0) {
-        return res.status(404).json({ error: 'Member not found' });
-    }
-
-    const member = result.rows[0];
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Member not found' });
 
     const supportsReceivedResult = await db.query(
         'SELECT COALESCE(SUM(confirmed_supports_count), 0) as total FROM boosts WHERE member_id = $1',
@@ -80,27 +94,19 @@ router.get('/profile', authenticate, async (req: AuthRequest, res) => {
     );
 
     res.json({
-        ...member,
+        ...result.rows[0],
         supports_received: supportsReceivedResult.rows[0].total,
         max_monthly_boosts: process.env.MAX_MONTHLY_BOOSTS || 20
     });
 });
 
-/**
- * NEW: POST /member/profile/update
- * Updates name, phone, region, profile photo URL
- */
 router.post('/profile/update', authenticate, async (req: AuthRequest, res) => {
     const memberId = req.user.id;
     const { name, phone, region, profile_photo_url } = req.body;
-
     await db.query(
-        `UPDATE members
-         SET name = $1, phone = $2, region = $3, profile_photo_url = $4
-         WHERE id = $5`,
+        `UPDATE members SET name = $1, phone = $2, region = $3, profile_photo_url = $4 WHERE id = $5`,
         [name, phone, region, profile_photo_url, memberId]
     );
-
     res.json({ success: true });
 });
 
