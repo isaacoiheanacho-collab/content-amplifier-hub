@@ -12,13 +12,15 @@ export const registerNewMember = async (email: string, passwordHash: string) => 
     // 3. Create the member profile (Starts as FALSE until they pay the fee)
     const newMember = await db.query(
         `INSERT INTO members (email, password_hash, is_early_bird, membership_active) 
-         VALUES ($1, $2, $3, false) RETURNING id, email, is_early_bird`,
+         VALUES ($1, $2, $3, false) 
+         RETURNING id, email, is_early_bird`,
         [email, passwordHash, isEarlyBird]
     );
 
     // 4. Update the counter so the next person is counted correctly
     await db.query('UPDATE app_stats SET total_registered_members = total_registered_members + 1');
 
+    // 5. Return registration fee and maintenance fee (fixed at 500)
     return {
         member: newMember.rows[0],
         amountToPay: registrationFee,
