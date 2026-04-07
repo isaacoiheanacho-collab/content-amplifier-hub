@@ -127,8 +127,9 @@ router.get('/profile', authenticate, async (req: AuthRequest, res) => {
 
 /**
  * POST /member/profile/update
+ * Handles both text data and optional photo upload
  */
-router.post('/profile/update', authenticate, async (req: AuthRequest, res) => {
+router.post('/profile/update', authenticate, upload.single('photo'), async (req: AuthRequest, res) => {
     const memberId = req.user.id;
 
     const { 
@@ -141,29 +142,52 @@ router.post('/profile/update', authenticate, async (req: AuthRequest, res) => {
         tiktok_url
     } = req.body;
 
-    await db.query(
-        `UPDATE members 
-         SET name = $1, phone = $2, region = $3, profile_photo_url = $4,
-             youtube_url = $5, facebook_url = $6, tiktok_url = $7
-         WHERE id = $8`,
-        [
-            name, 
-            phone, 
-            region, 
-            profile_photo_url,
-            youtube_url,
-            facebook_url,
-            tiktok_url,
-            memberId
-        ]
-    );
+    let finalPhotoUrl = profile_photo_url;
 
-    res.json({ success: true });
+    try {
+        // If a file is included in this request, upload it to Cloudinary first
+        if (req.file) {
+            const uploadPromise = new Promise<string>((resolve, reject) => {
+                const uploadStream = cloudinary.uploader.upload_stream(
+                    { folder: 'profile_photos' },
+                    (error, result) => {
+                        if (error || !result) reject(error);
+                        else resolve(result.secure_url);
+                    }
+                );
+                uploadStream.end(req.file!.buffer);
+            });
+            
+            finalPhotoUrl = await uploadPromise;
+        }
+
+        await db.query(
+            `UPDATE members 
+             SET name = $1, phone = $2, region = $3, profile_photo_url = $4,
+                 youtube_url = $5, facebook_url = $6, tiktok_url = $7
+             WHERE id = $8`,
+            [
+                name, 
+                phone, 
+                region, 
+                finalPhotoUrl,
+                youtube_url,
+                facebook_url,
+                tiktok_url,
+                memberId
+            ]
+        );
+
+        res.json({ success: true, profile_photo_url: finalPhotoUrl });
+    } catch (error) {
+        console.error("Profile Update Error:", error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
 });
 
 /**
  * POST /member/profile/upload-photo
- * Uploads a profile photo to Cloudinary and updates DB
+ * Standalone endpoint for uploading a photo to Cloudinary
  */
 router.post('/profile/upload-photo', authenticate, upload.single('photo'), async (req: AuthRequest, res) => {
     try {
