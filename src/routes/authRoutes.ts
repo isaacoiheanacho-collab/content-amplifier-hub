@@ -11,8 +11,8 @@ const router = Router();
 
 // POST /auth/ping – simple health check
 router.post('/ping', (req, res) => {
-    console.log('Ping received');
-    res.json({ message: 'pong' });
+  console.log('Ping received');
+  res.json({ message: 'pong' });
 });
 
 // POST /auth/register
@@ -35,16 +35,28 @@ router.post('/register', async (req, res) => {
     } catch (payError) {
       console.error('Paystack init error:', payError);
       res.status(201).json({
-        member,
+        member: {
+          id: member.id,
+          email: member.email,
+          membership_active: member.membership_active,
+          profile_complete: member.profile_photo_url ? true : false,
+          payment_complete: member.membership_active, // mirrors membership_active for now
+        },
         amountToPay: amount,
         paymentRequired: true,
-        error: 'Payment gateway temporarily unavailable. Please try again later.'
+        error: 'Payment gateway temporarily unavailable. Please try again later.',
       });
       return;
     }
 
     res.status(201).json({
-      member,
+      member: {
+        id: member.id,
+        email: member.email,
+        membership_active: member.membership_active,
+        profile_complete: member.profile_photo_url ? true : false,
+        payment_complete: member.membership_active, // true only after webhook activates membership
+      },
       amountToPay: amount,
       paymentUrl,
     });
@@ -156,8 +168,10 @@ router.post('/login', async (req, res) => {
       member: {
         id: member.id,
         email: member.email,
-        membership_active: member.membership_active
-      }
+        membership_active: member.membership_active,
+        profile_complete: member.profile_photo_url ? true : false,
+        payment_complete: member.membership_active, // same logic as above
+      },
     });
   } catch (error) {
     console.error(error);
@@ -167,13 +181,13 @@ router.post('/login', async (req, res) => {
 
 // POST /auth/register-token
 router.post('/register-token', authenticate, async (req: AuthRequest, res) => {
-    const { fcmToken } = req.body;
-    const memberId = req.user.id;
-    if (!fcmToken) {
-        return res.status(400).json({ error: 'Token required' });
-    }
-    await db.query('UPDATE members SET fcm_token = $1 WHERE id = $2', [fcmToken, memberId]);
-    res.json({ success: true });
+  const { fcmToken } = req.body;
+  const memberId = req.user.id;
+  if (!fcmToken) {
+    return res.status(400).json({ error: 'Token required' });
+  }
+  await db.query('UPDATE members SET fcm_token = $1 WHERE id = $2', [fcmToken, memberId]);
+  res.json({ success: true });
 });
 
 export default router;
