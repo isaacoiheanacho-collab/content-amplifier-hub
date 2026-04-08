@@ -3,6 +3,7 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import { db } from '../models/db';
 import cloudinary from '../utils/cloudinary';
 import { upload } from '../utils/multer';
+import { createPaystackTransaction } from '../services/paymentService';
 
 const router = Router();
 
@@ -127,7 +128,6 @@ router.get('/profile', authenticate, async (req: AuthRequest, res) => {
 
 /**
  * POST /member/profile/update
- * Handles both text data and optional photo upload
  */
 router.post('/profile/update', authenticate, upload.single('photo'), async (req: AuthRequest, res) => {
     const memberId = req.user.id;
@@ -145,7 +145,6 @@ router.post('/profile/update', authenticate, upload.single('photo'), async (req:
     let finalPhotoUrl = profile_photo_url;
 
     try {
-        // If a file is included in this request, upload it to Cloudinary first
         if (req.file) {
             const uploadPromise = new Promise<string>((resolve, reject) => {
                 const uploadStream = cloudinary.uploader.upload_stream(
@@ -187,7 +186,6 @@ router.post('/profile/update', authenticate, upload.single('photo'), async (req:
 
 /**
  * POST /member/profile/upload-photo
- * Standalone endpoint for uploading a photo to Cloudinary
  */
 router.post('/profile/upload-photo', authenticate, upload.single('photo'), async (req: AuthRequest, res) => {
     try {
@@ -219,6 +217,45 @@ router.post('/profile/upload-photo', authenticate, upload.single('photo'), async
     } catch (error) {
         console.error("Photo Upload Error:", error);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+/**
+ * POST /member/payment-url
+ * Generates a Paystack payment link for membership activation
+ */
+router.post('/payment-url', authenticate, async (req: AuthRequest, res) => {
+    const memberId = req.user.id;
+
+    try {
+        const result = await db.query(
+            `SELECT is_early_bird 
+             FROM members WHERE id = $1`,
+            [memberId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Member not found' });
+        }
+
+        const member = result.rows[0];
+
+        const amountToPay = member.is_early_bird ? 500 : 1000;
+
+        const paymentUrl = await createPaystackTransaction(
+            memberId,
+            amountToPay,
+            'registration'
+        );
+
+        return res.json({
+            paymentUrl,
+            amountToPay
+        });
+
+    } catch (error) {
+        console.error("Payment URL Error:", error);
+        return res.status(500).json({ error: 'Failed to generate payment link' });
     }
 });
 
