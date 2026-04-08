@@ -6,7 +6,7 @@ const MEMBERSHIP_FEE_USD = 50;   // Yearly membership
 const MAINTENANCE_FEE_USD = 5;   // Monthly maintenance
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-    apiVersion: '2025-02-24.acacia',
+    apiVersion: '2026-03-25.dahlia', // Fixed to match Stripe library requirement
 });
 
 const BASE_URL = process.env.BASE_URL || 'https://content-amplifier-hub.onrender.com';
