@@ -1,11 +1,14 @@
-import axios from 'axios';
+import Stripe from 'stripe';
 import { db } from '../models/db';
 
 // USD Pricing
 const MEMBERSHIP_FEE_USD = 50;   // Yearly membership
-const MAINTENANCE_FEE_USD = 5;   // Monthly maintenance (starts 6 months after membership)
+const MAINTENANCE_FEE_USD = 5;   // Monthly maintenance
 
-const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY!;
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+    apiVersion: '2025-02-24.acacia',
+});
+
 const BASE_URL = process.env.BASE_URL || 'https://content-amplifier-hub.onrender.com';
 
 /**
@@ -19,7 +22,7 @@ export const getMemberFee = async (
 };
 
 /**
- * Creates a Paystack transaction in USD.
+ * Creates a Stripe Checkout session (replaces Paystack transaction).
  */
 export const createPaystackTransaction = async (
     memberId: number,
@@ -34,62 +37,60 @@ export const createPaystackTransaction = async (
     const email = memberResult.rows[0]?.email;
     if (!email) throw new Error('Member not found');
 
-    console.log(`[Paystack] Creating transaction for member ${memberId}, email ${email}, amount USD ${amountUsd}`);
+    console.log(`[Stripe] Creating checkout session for member ${memberId}, email ${email}, amount USD ${amountUsd}`);
 
     try {
-        const response = await axios.post(
-            'https://api.paystack.co/transaction/initialize',
-            {
-                email,
-                amount: amountUsd * 100, // Paystack expects cents
-                currency: 'USD',
-                metadata: { memberId, type },
-                callback_url: `${BASE_URL}/auth/payment/callback`,
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${PAYSTACK_SECRET}`,
-                    'Content-Type': 'application/json',
+        const session = await stripe.checkout.sessions.create({
+            payment_method_types: ['card'],
+            line_items: [
+                {
+                    price_data: {
+                        currency: 'usd',
+                        product_data: {
+                            name: type === 'registration' ? 'Yearly Membership' : 'Monthly Maintenance',
+                        },
+                        unit_amount: amountUsd * 100, // cents
+                    },
+                    quantity: 1,
                 },
-            }
-        );
+            ],
+            mode: 'payment',
+            success_url: `${BASE_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${BASE_URL}/payment/cancel`,
+            metadata: {
+                memberId: memberId.toString(),
+                type: type,
+            },
+            customer_email: email,
+        });
 
-        console.log('[Paystack] Response status:', response.status);
-        console.log('[Paystack] Response data:', JSON.stringify(response.data));
-
-        if (response.data.status) {
-            return response.data.data.authorization_url;
-        } else {
-            throw new Error(response.data.message || 'Paystack initialization failed');
-        }
+        console.log('[Stripe] Checkout session created:', session.id);
+        return session.url;
     } catch (error: any) {
-        console.error('[Paystack] API error:', error.response?.data || error.message);
-        throw new Error(`Paystack error: ${error.response?.data?.message || error.message}`);
+        console.error('[Stripe] Error creating checkout session:', error);
+        throw new Error(`Stripe error: ${error.message}`);
     }
 };
 
 /**
- * Verifies Paystack transaction.
+ * Verifies Stripe payment (called from webhook or callback).
+ * For simplicity, we keep the same signature but we'll rely on webhooks.
  */
-export const verifyPaystackTransaction = async (reference: string) => {
-    const response = await axios.get(
-        `https://api.paystack.co/transaction/verify/${reference}`,
-        {
-            headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` },
+export const verifyPaystackTransaction = async (sessionId: string) => {
+    try {
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+        if (session.payment_status === 'paid') {
+            const memberId = parseInt(session.metadata!.memberId);
+            const type = session.metadata!.type;
+            const amountUsd = session.amount_total! / 100;
+            await activateMembership(memberId, amountUsd, type, sessionId);
+            return { success: true };
         }
-    );
-
-    if (response.data.status && response.data.data.status === 'success') {
-        const { metadata, amount } = response.data.data;
-
-        const memberId = metadata.memberId;
-        const type = metadata.type;
-
-        await activateMembership(memberId, amount / 100, type, reference);
-        return { success: true };
+        return { success: false, message: 'Payment not successful' };
+    } catch (error: any) {
+        console.error('[Stripe] Verification error:', error);
+        return { success: false, message: error.message };
     }
-
-    return { success: false, message: 'Payment not successful' };
 };
 
 /**
@@ -111,7 +112,6 @@ export const activateMembership = async (
             expiryDate = new Date();
             expiryDate.setFullYear(expiryDate.getFullYear() + 1);
         }
-
         // Maintenance lasts 1 month
         else {
             expiryDate = new Date();
@@ -149,7 +149,6 @@ export const activateMembership = async (
                 [firstMaintenanceDue, memberId]
             );
         }
-
         // SUBSEQUENT MAINTENANCE: monthly
         else if (paymentType === 'maintenance') {
             await db.query(

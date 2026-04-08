@@ -222,7 +222,7 @@ router.post('/profile/upload-photo', authenticate, upload.single('photo'), async
 
 /**
  * POST /member/payment-url
- * Generates a Paystack payment link for membership activation (USD)
+ * Generates a Stripe Checkout payment link for membership activation (USD)
  */
 router.post('/payment-url', authenticate, async (req: AuthRequest, res) => {
     const memberId = req.user.id;
