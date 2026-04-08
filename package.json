@@ -25,7 +25,8 @@
     "multer-storage-cloudinary": "^4.0.0",
     "node-cron": "^3.0.0",
     "paystack": "^2.0.1",
-    "pg": "^8.11.0"
+    "pg": "^8.11.0",
+    "stripe": "^22.0.1"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
