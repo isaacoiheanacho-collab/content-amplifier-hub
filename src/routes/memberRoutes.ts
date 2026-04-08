@@ -36,8 +36,8 @@ router.get('/maintenance-status/:id', authenticate, async (req: AuthRequest, res
             allowed: isAllowed,
             nextDue: nextDue,
             reason: isAllowed
-                ? "Maintenance Fee is Up to Date"
-                : "Your monthly maintenance fee of ₦500 is due."
+                ? "Maintenance fee is up to date."
+                : "Your monthly maintenance fee of $5 is due."
         });
     } catch (error) {
         console.error("Maintenance Status Error:", error);
@@ -222,25 +222,13 @@ router.post('/profile/upload-photo', authenticate, upload.single('photo'), async
 
 /**
  * POST /member/payment-url
- * Generates a Paystack payment link for membership activation
+ * Generates a Paystack payment link for membership activation (USD)
  */
 router.post('/payment-url', authenticate, async (req: AuthRequest, res) => {
     const memberId = req.user.id;
 
     try {
-        const result = await db.query(
-            `SELECT is_early_bird 
-             FROM members WHERE id = $1`,
-            [memberId]
-        );
-
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Member not found' });
-        }
-
-        const member = result.rows[0];
-
-        const amountToPay = member.is_early_bird ? 500 : 1000;
+        const amountToPay = 50; // USD membership fee
 
         const paymentUrl = await createPaystackTransaction(
             memberId,
@@ -250,7 +238,8 @@ router.post('/payment-url', authenticate, async (req: AuthRequest, res) => {
 
         return res.json({
             paymentUrl,
-            amountToPay
+            amountToPay,
+            currency: "USD"
         });
 
     } catch (error) {

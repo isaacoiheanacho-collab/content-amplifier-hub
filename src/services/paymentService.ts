@@ -1,26 +1,36 @@
 import axios from 'axios';
 import { db } from '../models/db';
 
-// Amounts from environment
-const EARLY_BIRD_FEE = parseInt(process.env.EARLY_BIRD_FEE || '5000');
-const STANDARD_FEE = parseInt(process.env.STANDARD_FEE || '20000');
-const MAINTENANCE_FEE = parseInt(process.env.MONTHLY_MAINTENANCE_FEE || '500');
+// USD Pricing
+const MEMBERSHIP_FEE_USD = 50;   // Yearly membership
+const MAINTENANCE_FEE_USD = 5;   // Monthly maintenance (starts 6 months after membership)
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY!;
 const BASE_URL = process.env.BASE_URL || 'https://content-amplifier-hub.onrender.com';
 
-export const getMemberFee = async (memberId: number): Promise<number> => {
-    const result = await db.query('SELECT is_early_bird FROM members WHERE id = $1', [memberId]);
-    const isEarlyBird = result.rows[0]?.is_early_bird;
-    return isEarlyBird ? EARLY_BIRD_FEE : STANDARD_FEE;
+/**
+ * Returns the correct fee based on payment type.
+ */
+export const getMemberFee = async (
+    memberId: number,
+    type: 'registration' | 'maintenance'
+): Promise<number> => {
+    return type === 'registration' ? MEMBERSHIP_FEE_USD : MAINTENANCE_FEE_USD;
 };
 
+/**
+ * Creates a Paystack transaction in USD.
+ */
 export const createPaystackTransaction = async (
     memberId: number,
-    amount: number,
+    amountUsd: number,
     type: 'registration' | 'maintenance'
 ) => {
-    const memberResult = await db.query('SELECT email FROM members WHERE id = $1', [memberId]);
+    const memberResult = await db.query(
+        'SELECT email FROM members WHERE id = $1',
+        [memberId]
+    );
+
     const email = memberResult.rows[0]?.email;
     if (!email) throw new Error('Member not found');
 
@@ -28,7 +38,8 @@ export const createPaystackTransaction = async (
         'https://api.paystack.co/transaction/initialize',
         {
             email,
-            amount: amount * 100,
+            amount: amountUsd * 100, // Paystack expects cents
+            currency: 'USD',
             metadata: { memberId, type },
             callback_url: `${BASE_URL}/auth/payment/callback`,
         },
@@ -47,6 +58,9 @@ export const createPaystackTransaction = async (
     }
 };
 
+/**
+ * Verifies Paystack transaction.
+ */
 export const verifyPaystackTransaction = async (reference: string) => {
     const response = await axios.get(
         `https://api.paystack.co/transaction/verify/${reference}`,
@@ -57,6 +71,7 @@ export const verifyPaystackTransaction = async (reference: string) => {
 
     if (response.data.status && response.data.data.status === 'success') {
         const { metadata, amount } = response.data.data;
+
         const memberId = metadata.memberId;
         const type = metadata.type;
 
@@ -67,45 +82,52 @@ export const verifyPaystackTransaction = async (reference: string) => {
     return { success: false, message: 'Payment not successful' };
 };
 
+/**
+ * Activates membership or maintenance after successful payment.
+ */
 export const activateMembership = async (
     memberId: number,
-    amount: number,
+    amountUsd: number,
     paymentType: string,
     transactionRef: string
 ) => {
     try {
         await db.query('BEGIN');
 
-        // Determine expiry: 1 year for registration, 1 month for maintenance
         let expiryDate: Date;
-        if (paymentType === 'maintenance') {
-            expiryDate = new Date();
-            expiryDate.setMonth(expiryDate.getMonth() + 1);
-        } else {
+
+        // Membership lasts 1 year
+        if (paymentType === 'registration') {
             expiryDate = new Date();
             expiryDate.setFullYear(expiryDate.getFullYear() + 1);
         }
 
-        // Update membership status + expiry
+        // Maintenance lasts 1 month
+        else {
+            expiryDate = new Date();
+            expiryDate.setMonth(expiryDate.getMonth() + 1);
+        }
+
+        // Update membership status
         await db.query(
             `UPDATE members 
-             SET membership_active = true, 
-                 membership_expires_at = $1 
+             SET membership_active = true,
+                 membership_expires_at = $1
              WHERE id = $2`,
             [expiryDate, memberId]
         );
 
-        // Record payment and capture paid_at timestamp
+        // Record payment
         const paymentResult = await db.query(
-            `INSERT INTO payments (member_id, amount, payment_type, transaction_reference) 
+            `INSERT INTO payments (member_id, amount, payment_type, transaction_reference)
              VALUES ($1, $2, $3, $4)
              RETURNING paid_at`,
-            [memberId, amount, paymentType, transactionRef]
+            [memberId, amountUsd, paymentType, transactionRef]
         );
 
         const paidAt: Date = paymentResult.rows[0].paid_at;
 
-        // FIRST MAINTENANCE: 6 months after registration payment
+        // FIRST MAINTENANCE: 6 months after membership
         if (paymentType === 'registration') {
             const firstMaintenanceDue = new Date(paidAt);
             firstMaintenanceDue.setMonth(firstMaintenanceDue.getMonth() + 6);
