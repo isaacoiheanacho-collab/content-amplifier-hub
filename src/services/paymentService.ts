@@ -34,27 +34,37 @@ export const createPaystackTransaction = async (
     const email = memberResult.rows[0]?.email;
     if (!email) throw new Error('Member not found');
 
-    const response = await axios.post(
-        'https://api.paystack.co/transaction/initialize',
-        {
-            email,
-            amount: amountUsd * 100, // Paystack expects cents
-            currency: 'USD',
-            metadata: { memberId, type },
-            callback_url: `${BASE_URL}/auth/payment/callback`,
-        },
-        {
-            headers: {
-                Authorization: `Bearer ${PAYSTACK_SECRET}`,
-                'Content-Type': 'application/json',
-            },
-        }
-    );
+    console.log(`[Paystack] Creating transaction for member ${memberId}, email ${email}, amount USD ${amountUsd}`);
 
-    if (response.data.status) {
-        return response.data.data.authorization_url;
-    } else {
-        throw new Error(response.data.message || 'Paystack initialization failed');
+    try {
+        const response = await axios.post(
+            'https://api.paystack.co/transaction/initialize',
+            {
+                email,
+                amount: amountUsd * 100, // Paystack expects cents
+                currency: 'USD',
+                metadata: { memberId, type },
+                callback_url: `${BASE_URL}/auth/payment/callback`,
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${PAYSTACK_SECRET}`,
+                    'Content-Type': 'application/json',
+                },
+            }
+        );
+
+        console.log('[Paystack] Response status:', response.status);
+        console.log('[Paystack] Response data:', JSON.stringify(response.data));
+
+        if (response.data.status) {
+            return response.data.data.authorization_url;
+        } else {
+            throw new Error(response.data.message || 'Paystack initialization failed');
+        }
+    } catch (error: any) {
+        console.error('[Paystack] API error:', error.response?.data || error.message);
+        throw new Error(`Paystack error: ${error.response?.data?.message || error.message}`);
     }
 };
 

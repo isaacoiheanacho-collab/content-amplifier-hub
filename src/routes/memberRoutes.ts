@@ -230,11 +230,15 @@ router.post('/payment-url', authenticate, async (req: AuthRequest, res) => {
     try {
         const amountToPay = 50; // USD membership fee
 
+        console.log(`[Payment URL] Generating for member ${memberId}, amount ${amountToPay} USD`);
+
         const paymentUrl = await createPaystackTransaction(
             memberId,
             amountToPay,
             'registration'
         );
+
+        console.log(`[Payment URL] Success: ${paymentUrl}`);
 
         return res.json({
             paymentUrl,
@@ -242,9 +246,9 @@ router.post('/payment-url', authenticate, async (req: AuthRequest, res) => {
             currency: "USD"
         });
 
-    } catch (error) {
-        console.error("Payment URL Error:", error);
-        return res.status(500).json({ error: 'Failed to generate payment link' });
+    } catch (error: any) {
+        console.error("[Payment URL] Error:", error.message || error);
+        return res.status(500).json({ error: error.message || 'Failed to generate payment link' });
     }
 });
 
