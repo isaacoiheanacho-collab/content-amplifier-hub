@@ -3,13 +3,16 @@ import * as dotenv from 'dotenv';
 import boostRoutes from './routes/boostRoutes';
 import authRoutes from './routes/authRoutes';
 import memberRoutes from './routes/memberRoutes';
-import testStripe from './routes/testStripe'; // <-- ADD THIS
+import stripeWebhook from './routes/stripeWebhook';
 import './services/hourlyEngine';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Stripe webhook needs raw body (must come before express.json)
+app.use('/stripe/webhook', stripeWebhook);
 
 // Capture raw body for Paystack webhook (keep if still needed)
 app.use('/auth/paystack-webhook', (req, res, next) => {
@@ -30,7 +33,6 @@ app.get('/', (req, res) => {
 app.use('/auth', authRoutes);
 app.use('/boosts', boostRoutes);
 app.use('/member', memberRoutes);
-app.use('/test', testStripe); // <-- ADD THIS
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
