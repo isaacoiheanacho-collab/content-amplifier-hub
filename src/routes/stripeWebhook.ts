@@ -15,7 +15,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         return res.status(500).send('Webhook secret missing');
     }
 
-    let event: Stripe.Event;
+    let event: any;
     try {
         event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
     } catch (err: any) {
@@ -24,10 +24,10 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
     }
 
     if (event.type === 'checkout.session.completed') {
-        const session = event.data.object as Stripe.Checkout.Session;
-        const memberId = parseInt(session.metadata!.memberId);
-        const type = session.metadata!.type;
-        const amountUsd = session.amount_total! / 100;
+        const session = event.data.object;
+        const memberId = parseInt(session.metadata.memberId);
+        const type = session.metadata.type;
+        const amountUsd = session.amount_total / 100;
 
         try {
             await activateMembership(memberId, amountUsd, type, session.id);
