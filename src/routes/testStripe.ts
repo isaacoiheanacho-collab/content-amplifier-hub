@@ -6,11 +6,17 @@ const router = Router();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2026-03-25.dahlia' });
 
 router.get('/test-key', authenticate, async (req: AuthRequest, res) => {
-    const key = process.env.STRIPE_SECRET_KEY;
-    res.json({ present: !!key, prefix: key ? key.substring(0, 10) : null });
+    try {
+        const key = process.env.STRIPE_SECRET_KEY;
+        const firstChars = key ? key.substring(0, 10) : 'null';
+        res.json({ keyPresent: !!key, keyPrefix: firstChars });
+    } catch (e) {
+        res.json({ error: e.message });
+    }
 });
 
 router.post('/test-checkout', authenticate, async (req: AuthRequest, res) => {
+    const memberId = req.user.id;
     try {
         const session = await stripe.checkout.sessions.create({
             payment_method_types: ['card'],
@@ -18,14 +24,14 @@ router.post('/test-checkout', authenticate, async (req: AuthRequest, res) => {
                 price_data: {
                     currency: 'usd',
                     product_data: { name: 'Test Product' },
-                    unit_amount: 500,
+                    unit_amount: 500, // $5.00
                 },
                 quantity: 1,
             }],
             mode: 'payment',
             success_url: 'https://example.com/success',
             cancel_url: 'https://example.com/cancel',
-            metadata: { memberId: req.user.id.toString() },
+            metadata: { memberId: memberId.toString() },
         });
         res.json({ url: session.url });
     } catch (error: any) {
