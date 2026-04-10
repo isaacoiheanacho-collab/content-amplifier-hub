@@ -9,6 +9,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
     apiVersion: '2026-03-25.dahlia',
 });
 
+// This should be your backend/base app URL (Render)
 const BASE_URL = process.env.BASE_URL || 'https://content-amplifier-hub.onrender.com';
 
 /**
@@ -18,17 +19,19 @@ export const getMemberFee = async (
     memberId: number,
     type: 'registration' | 'maintenance'
 ): Promise<number> => {
+    // You can later make this dynamic per member if needed
     return type === 'registration' ? MEMBERSHIP_FEE_USD : MAINTENANCE_FEE_USD;
 };
 
 /**
- * Creates a Stripe Checkout session (replaces Paystack transaction).
+ * Creates a Stripe Checkout session.
+ * Backend state changes are handled ONLY via webhook, not via success_url.
  */
-export const createPaystackTransaction = async (
+export const createStripeCheckoutSession = async (
     memberId: number,
     amountUsd: number,
     type: 'registration' | 'maintenance'
-) => {
+): Promise<string> => {
     const memberResult = await db.query(
         'SELECT email FROM members WHERE id = $1',
         [memberId]
@@ -37,7 +40,10 @@ export const createPaystackTransaction = async (
     const email = memberResult.rows[0]?.email;
     if (!email) throw new Error('Member not found');
 
-    console.log(`[Stripe] Creating checkout session for member ${memberId}, email ${email}, amount USD ${amountUsd}`);
+    console.log(
+        `[Stripe] Creating checkout session for member ${memberId}, ` +
+        `email ${email}, amount USD ${amountUsd}, type ${type}`
+    );
 
     try {
         const session = await stripe.checkout.sessions.create({
@@ -47,7 +53,9 @@ export const createPaystackTransaction = async (
                     price_data: {
                         currency: 'usd',
                         product_data: {
-                            name: type === 'registration' ? 'Yearly Membership' : 'Monthly Maintenance',
+                            name: type === 'registration'
+                                ? 'Yearly Membership'
+                                : 'Monthly Maintenance',
                         },
                         unit_amount: amountUsd * 100, // cents
                     },
@@ -55,7 +63,8 @@ export const createPaystackTransaction = async (
                 },
             ],
             mode: 'payment',
-            success_url: `${BASE_URL}/member/activate?session_id={CHECKOUT_SESSION_ID}`, // changed
+            // These URLs are now purely for UX; backend updates happen via webhook
+            success_url: `${BASE_URL}/payment/success`,
             cancel_url: `${BASE_URL}/payment/cancel`,
             metadata: {
                 memberId: memberId.toString(),
@@ -65,6 +74,10 @@ export const createPaystackTransaction = async (
         });
 
         console.log('[Stripe] Checkout session created:', session.id);
+        if (!session.url) {
+            throw new Error('Stripe session URL is missing');
+        }
+
         return session.url;
     } catch (error: any) {
         console.error('[Stripe] Error creating checkout session:', error);
@@ -73,19 +86,45 @@ export const createPaystackTransaction = async (
 };
 
 /**
- * Verifies Stripe payment (called from webhook or callback).
+ * Verifies a Stripe Checkout Session and activates membership/maintenance.
+ * This is intended to be called from the Stripe webhook handler.
  */
-export const verifyPaystackTransaction = async (sessionId: string) => {
+export const verifyStripeSession = async (sessionId: string) => {
     try {
         const session = await stripe.checkout.sessions.retrieve(sessionId);
-        if (session.payment_status === 'paid') {
-            const memberId = parseInt(session.metadata!.memberId);
-            const type = session.metadata!.type;
-            const amountUsd = session.amount_total! / 100;
-            await activateMembership(memberId, amountUsd, type, sessionId);
-            return { success: true };
+
+        if (session.payment_status !== 'paid') {
+            return { success: false, message: 'Payment not successful' };
         }
-        return { success: false, message: 'Payment not successful' };
+
+        if (!session.metadata) {
+            console.error('[Stripe] Session metadata missing for', sessionId);
+            return { success: false, message: 'Missing session metadata' };
+        }
+
+        const memberIdRaw = session.metadata.memberId;
+        const type = session.metadata.type as 'registration' | 'maintenance' | undefined;
+
+        if (!memberIdRaw || !type) {
+            console.error('[Stripe] Invalid metadata for session', sessionId, session.metadata);
+            return { success: false, message: 'Invalid session metadata' };
+        }
+
+        const memberId = parseInt(memberIdRaw, 10);
+        if (Number.isNaN(memberId)) {
+            console.error('[Stripe] Invalid memberId in metadata for session', sessionId, memberIdRaw);
+            return { success: false, message: 'Invalid member ID in metadata' };
+        }
+
+        const amountUsd = (session.amount_total ?? 0) / 100;
+
+        console.log(
+            `[Stripe] Verifying session ${sessionId} for member ${memberId}, ` +
+            `type ${type}, amountUsd ${amountUsd}`
+        );
+
+        await activateMembership(memberId, amountUsd, type, sessionId);
+        return { success: true };
     } catch (error: any) {
         console.error('[Stripe] Verification error:', error);
         return { success: false, message: error.message };
@@ -94,11 +133,12 @@ export const verifyPaystackTransaction = async (sessionId: string) => {
 
 /**
  * Activates membership or maintenance after successful payment.
+ * This is called only after Stripe confirms payment (via webhook).
  */
 export const activateMembership = async (
     memberId: number,
     amountUsd: number,
-    paymentType: string,
+    paymentType: 'registration' | 'maintenance',
     transactionRef: string
 ) => {
     try {
@@ -163,6 +203,7 @@ export const activateMembership = async (
         return { success: true, expiryDate };
     } catch (error) {
         await db.query('ROLLBACK');
+        console.error('[Stripe] activateMembership error:', error);
         throw error;
     }
 };

@@ -3,8 +3,7 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import { db } from '../models/db';
 import cloudinary from '../utils/cloudinary';
 import { upload } from '../utils/multer';
-import { createPaystackTransaction, activateMembership } from '../services/paymentService';
-import Stripe from 'stripe';
+import { createStripeCheckoutSession, getMemberFee } from '../services/paymentService';
 
 const router = Router();
 
@@ -223,17 +222,18 @@ router.post('/profile/upload-photo', authenticate, upload.single('photo'), async
 
 /**
  * POST /member/payment-url
- * Generates a Stripe Checkout payment link for membership activation (USD)
+ * Generates a Stripe Checkout payment link for membership activation (USD).
+ * Backend activation is handled exclusively via Stripe webhook.
  */
 router.post('/payment-url', authenticate, async (req: AuthRequest, res) => {
     const memberId = req.user.id;
 
     try {
-        const amountToPay = 50; // USD membership fee
+        const amountToPay = await getMemberFee(memberId, 'registration');
 
         console.log(`[Payment URL] Generating for member ${memberId}, amount ${amountToPay} USD`);
 
-        const paymentUrl = await createPaystackTransaction(
+        const paymentUrl = await createStripeCheckoutSession(
             memberId,
             amountToPay,
             'registration'
@@ -250,33 +250,6 @@ router.post('/payment-url', authenticate, async (req: AuthRequest, res) => {
     } catch (error: any) {
         console.error("[Payment URL] Error:", error.message || error);
         return res.status(500).json({ error: error.message || 'Failed to generate payment link' });
-    }
-});
-
-/**
- * GET /member/activate
- * Activates membership after successful Stripe payment
- */
-router.get('/activate', async (req, res) => {
-    const sessionId = req.query.session_id as string;
-    if (!sessionId) {
-        return res.status(400).send('Missing session ID');
-    }
-    try {
-        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2026-03-25.dahlia' });
-        const session = await stripe.checkout.sessions.retrieve(sessionId);
-        if (session.payment_status === 'paid') {
-            const memberId = parseInt(session.metadata!.memberId);
-            const type = session.metadata!.type;
-            const amountUsd = session.amount_total! / 100;
-            await activateMembership(memberId, amountUsd, type, sessionId);
-            res.send('Payment successful! Your membership is now active. You can close this window.');
-        } else {
-            res.status(400).send('Payment not completed.');
-        }
-    } catch (error) {
-        console.error(error);
-        res.status(500).send('Internal error');
     }
 });
 
