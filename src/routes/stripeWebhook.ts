@@ -4,20 +4,14 @@ import { verifyStripeSession } from '../services/paymentService';
 
 const router = Router();
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2026-03-25.dahlia',
-});
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
-/**
- * STRIPE WEBHOOK HANDLER
- * POST /webhook/stripe
- */
 router.post('/', async (req, res) => {
   const sig = req.headers['stripe-signature'] as string;
 
-  let event: Stripe.Event;
+  let event: any;
 
   try {
     event = stripe.webhooks.constructEvent(
@@ -26,25 +20,18 @@ router.post('/', async (req, res) => {
       endpointSecret!
     );
   } catch (err: any) {
-    console.error('[Stripe] ❌ Webhook signature verification failed:', err.message);
+    console.error('[Stripe] Webhook signature failed:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  console.log(`[Stripe] 🔔 Event received: ${event.type}`);
+  console.log(`[Stripe] Event received: ${event.type}`);
 
-  // Handle checkout.session.completed
   if (event.type === 'checkout.session.completed') {
-    const session = event.data.object as Stripe.Checkout.Session;
+    const session = event.data.object as any;
 
-    console.log('[Stripe] ✅ checkout.session.completed for session:', session.id);
+    console.log('[Stripe] checkout.session.completed:', session.id);
 
-    const result = await verifyStripeSession(session.id);
-
-    if (result.success) {
-      console.log('[Stripe] 🎉 Membership activated for session:', session.id);
-    } else {
-      console.error('[Stripe] ❌ Activation failed:', result.message);
-    }
+    await verifyStripeSession(session.id);
   }
 
   res.json({ received: true });
