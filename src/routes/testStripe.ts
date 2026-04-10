@@ -10,7 +10,7 @@ router.get('/test-key', authenticate, async (req: AuthRequest, res) => {
         const key = process.env.STRIPE_SECRET_KEY;
         const firstChars = key ? key.substring(0, 10) : 'null';
         res.json({ keyPresent: !!key, keyPrefix: firstChars });
-    } catch (e) {
+    } catch (e: any) {
         res.json({ error: e.message });
     }
 });
@@ -24,7 +24,7 @@ router.post('/test-checkout', authenticate, async (req: AuthRequest, res) => {
                 price_data: {
                     currency: 'usd',
                     product_data: { name: 'Test Product' },
-                    unit_amount: 500, // $5.00
+                    unit_amount: 500,
                 },
                 quantity: 1,
             }],
