@@ -6,7 +6,7 @@ const MEMBERSHIP_FEE_USD = 50;   // Yearly membership
 const MAINTENANCE_FEE_USD = 5;   // Monthly maintenance
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-    apiVersion: '2026-03-25.dahlia', // Fixed to match Stripe library requirement
+    apiVersion: '2026-03-25.dahlia',
 });
 
 const BASE_URL = process.env.BASE_URL || 'https://content-amplifier-hub.onrender.com';
@@ -55,7 +55,7 @@ export const createPaystackTransaction = async (
                 },
             ],
             mode: 'payment',
-            success_url: `${BASE_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+            success_url: `${BASE_URL}/member/activate?session_id={CHECKOUT_SESSION_ID}`, // changed
             cancel_url: `${BASE_URL}/payment/cancel`,
             metadata: {
                 memberId: memberId.toString(),
@@ -74,7 +74,6 @@ export const createPaystackTransaction = async (
 
 /**
  * Verifies Stripe payment (called from webhook or callback).
- * For simplicity, we keep the same signature but we'll rely on webhooks.
  */
 export const verifyPaystackTransaction = async (sessionId: string) => {
     try {

@@ -3,7 +3,7 @@ import * as dotenv from 'dotenv';
 import boostRoutes from './routes/boostRoutes';
 import authRoutes from './routes/authRoutes';
 import memberRoutes from './routes/memberRoutes';
-import testStripe from './routes/testStripe'; // <-- ADD THIS
+import testStripe from './routes/testStripe';
 import './services/hourlyEngine';
 
 dotenv.config();
@@ -30,7 +30,7 @@ app.get('/', (req, res) => {
 app.use('/auth', authRoutes);
 app.use('/boosts', boostRoutes);
 app.use('/member', memberRoutes);
-app.use('/test', testStripe); // <-- ADD THIS
+app.use('/test', testStripe);
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
