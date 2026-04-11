@@ -185,45 +185,7 @@ router.post('/profile/update', authenticate, upload.single('photo'), async (req:
 });
 
 /**
- * POST /member/profile/upload-photo
- */
-router.post('/profile/upload-photo', authenticate, upload.single('photo'), async (req: AuthRequest, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'No file uploaded' });
-        }
-
-        const uploadStream = cloudinary.uploader.upload_stream(
-            { folder: 'profile_photos' },
-            async (error, result) => {
-                if (error || !result) {
-                    console.error(error);
-                    return res.status(500).json({ error: 'Cloudinary upload failed' });
-                }
-
-                const imageUrl = result.secure_url;
-
-                await db.query(
-                    `UPDATE members SET profile_photo_url = $1 WHERE id = $2`,
-                    [imageUrl, req.user.id]
-                );
-
-                return res.json({ url: imageUrl });
-            }
-        );
-
-        uploadStream.end(req.file.buffer);
-
-    } catch (error) {
-        console.error("Photo Upload Error:", error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-/**
  * POST /member/payment-url
- * Generates a Stripe Checkout payment link for membership activation (USD).
- * Backend activation is handled exclusively via Stripe webhook.
  */
 router.post('/payment-url', authenticate, async (req: AuthRequest, res) => {
     const memberId = req.user.id;
