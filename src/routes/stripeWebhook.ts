@@ -6,12 +6,19 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
 export default async function stripeWebhook(req: Request, res: Response) {
-  const sig = req.headers['stripe-signature'] as string;
+  const sig = req.headers['stripe-signature'];
 
-  let event: any;
+  if (!sig) {
+    console.error('[Stripe] Missing stripe-signature header');
+    return res.status(400).send('Webhook Error: Missing signature');
+  }
+
+  // DEBUG LOGS
+  console.log('[Stripe] Raw Body received:', Buffer.isBuffer(req.body) ? 'Yes (Buffer)' : 'No (Wrong Type)');
+
+  let event: any; // Using 'any' here bypasses the Stripe namespace issue
 
   try {
-    // req.body MUST be raw buffer (index.ts already ensures this)
     event = stripe.webhooks.constructEvent(
       req.body,
       sig,
@@ -19,17 +26,22 @@ export default async function stripeWebhook(req: Request, res: Response) {
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[Stripe] Webhook signature failed:', message);
+    console.error('[Stripe] Webhook signature verification failed:', message);
     return res.status(400).send(`Webhook Error: ${message}`);
   }
 
-  console.log(`[Stripe] Event received: ${event.type}`);
+  console.log(`[Stripe] Event verified: ${event.type}`);
 
   if (event.type === 'checkout.session.completed') {
-    const session = event.data.object as any;
-    console.log('[Stripe] checkout.session.completed:', session.id);
+    const session = event.data.object;
+    console.log('[Stripe] Processing session:', session.id);
 
-    await verifyStripeSession(session.id);
+    try {
+      await verifyStripeSession(session.id);
+      console.log('[Stripe] Database updated successfully');
+    } catch (dbErr) {
+      console.error('[Stripe] Database update failed:', dbErr);
+    }
   }
 
   return res.json({ received: true });
