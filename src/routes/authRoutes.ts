@@ -4,11 +4,10 @@ import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
 import { registerNewMember } from '../services/memberService';
 import { db } from '../models/db';
-import { authenticate, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 
-// Configure the email sender using your Gmail App Password from Render env
+// Configure the email sender
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
@@ -17,27 +16,37 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// Helper: Generate, Save to DB, and Send OTP via Email
+// IMPROVED: Added try-catch and explicit logging for Render logs
 async function generateAndSendOTP(memberId: number, email: string) {
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   const expiresAt = new Date(Date.now() + 10 * 60000); // 10 min expiry
 
-  // Clear any existing OTPs for this member to prevent confusion
-  await db.query('DELETE FROM otp_verifications WHERE member_id = $1', [memberId]);
+  try {
+    // 1. Clear existing and save new OTP
+    await db.query('DELETE FROM otp_verifications WHERE member_id = $1', [memberId]);
+    await db.query(
+      'INSERT INTO otp_verifications (member_id, email, otp_code, expires_at) VALUES ($1, $2, $3, $4)',
+      [memberId, email, otp, expiresAt]
+    );
 
-  // Save the fresh OTP to your new separate table
-  await db.query(
-    'INSERT INTO otp_verifications (member_id, email, otp_code, expires_at) VALUES ($1, $2, $3, $4)',
-    [memberId, email, otp, expiresAt]
-  );
+    // 2. Attempt to send email
+    await transporter.sendMail({
+      from: `"Content Amplifier Hub" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: "Your Verification Code",
+      text: `Your verification code is: ${otp}. It expires in 10 minutes.`,
+    });
 
-  // Trigger the email
-  await transporter.sendMail({
-    from: `"Content Amplifier Hub" <${process.env.EMAIL_USER}>`,
-    to: email,
-    subject: "Your Verification Code",
-    text: `Your verification code is: ${otp}. It expires in 10 minutes.`,
-  });
+    console.log(`[Mail Success] OTP sent to ${email}`);
+  } catch (error: any) {
+    // This will appear in your Render "Logs" tab
+    console.error('[Mail Error] Detailed failure info:', {
+      message: error.message,
+      code: error.code,
+      command: error.command
+    });
+    throw new Error('Failed to send verification email');
+  }
 }
 
 // POST /auth/register
@@ -52,11 +61,10 @@ router.post('/register', async (req, res) => {
     const result = await registerNewMember(email, hashedPassword);
     const member = result.member;
 
-    // Send the verification code immediately after DB insertion
     await generateAndSendOTP(member.id, member.email);
 
     res.status(201).json({
-      message: 'Registration successful. Verification code sent to email.',
+      message: 'OTP sent to email.',
       memberId: member.id,
       email: member.email,
       isVerified: false
@@ -70,11 +78,11 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// POST /auth/verify-otp
+// POST /auth/verify-otp (UPDATED WITH AUTO-LOGIN)
 router.post('/verify-otp', async (req, res) => {
   const { email, otp } = req.body;
   if (!email || !otp) {
-    return res.status(400).json({ error: 'Email and OTP are required' });
+    return res.status(400).json({ error: 'Email and OTP required' });
   }
 
   try {
@@ -88,47 +96,13 @@ router.post('/verify-otp', async (req, res) => {
       return res.status(400).json({ error: 'Invalid or expired code' });
     }
 
-    // 1. Mark member as verified in the members table
+    // 1. Mark as verified
     await db.query('UPDATE members SET is_verified = true WHERE email = $1', [email]);
-    
-    // 2. Clean up: Delete the used OTP record
     await db.query('DELETE FROM otp_verifications WHERE email = $1', [email]);
 
-    res.json({ success: true, message: 'Email verified successfully!' });
-  } catch (error) {
-    console.error('[Auth] Verification error:', error);
-    res.status(500).json({ error: 'Verification failed' });
-  }
-});
-
-// POST /auth/login
-router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password required' });
-  }
-
-  try {
-    const result = await db.query('SELECT * FROM members WHERE email = $1', [email]);
-    const member = result.rows[0];
-    
-    if (!member) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    const valid = await bcrypt.compare(password, member.password_hash);
-    if (!valid) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    // Check if the user has verified their email
-    if (!member.is_verified) {
-      return res.status(403).json({ 
-        error: 'Email not verified', 
-        isVerified: false,
-        memberId: member.id 
-      });
-    }
+    // 2. Fetch member to generate token (Auto-Login)
+    const memberRes = await db.query('SELECT * FROM members WHERE email = $1', [email]);
+    const member = memberRes.rows[0];
 
     const token = jwt.sign(
       { id: member.id, email: member.email },
@@ -136,24 +110,23 @@ router.post('/login', async (req, res) => {
       { expiresIn: '30d' }
     );
 
-    res.json({
-      token,
+    // 3. Return token immediately
+    res.json({ 
+      success: true, 
+      token, 
       member: {
         id: member.id,
         email: member.email,
         membership_active: member.membership_active,
-        is_verified: member.is_verified
-      },
+        is_verified: true,
+        profileComplete: member.profile_complete || false 
+      }
     });
   } catch (error) {
-    console.error('[Auth] Login error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('[Auth] Verification error:', error);
+    res.status(500).json({ error: 'Verification failed' });
   }
 });
 
-// POST /auth/ping – simple health check
-router.post('/ping', (req, res) => {
-  res.json({ message: 'pong' });
-});
-
+// (Keep your existing /login and /ping routes below)
 export default router;
