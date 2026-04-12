@@ -1,18 +1,44 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import nodemailer from 'nodemailer';
 import { registerNewMember } from '../services/memberService';
 import { db } from '../models/db';
-import { activateMembership } from '../services/paymentService'; // ONLY this stays
 import { authenticate, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 
-// POST /auth/ping – simple health check
-router.post('/ping', (req, res) => {
-  console.log('Ping received');
-  res.json({ message: 'pong' });
+// Configure the email sender using your Gmail App Password from Render env
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
 });
+
+// Helper: Generate, Save to DB, and Send OTP via Email
+async function generateAndSendOTP(memberId: number, email: string) {
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = new Date(Date.now() + 10 * 60000); // 10 min expiry
+
+  // Clear any existing OTPs for this member to prevent confusion
+  await db.query('DELETE FROM otp_verifications WHERE member_id = $1', [memberId]);
+
+  // Save the fresh OTP to your new separate table
+  await db.query(
+    'INSERT INTO otp_verifications (member_id, email, otp_code, expires_at) VALUES ($1, $2, $3, $4)',
+    [memberId, email, otp, expiresAt]
+  );
+
+  // Trigger the email
+  await transporter.sendMail({
+    from: `"Content Amplifier Hub" <${process.env.EMAIL_USER}>`,
+    to: email,
+    subject: "Your Verification Code",
+    text: `Your verification code is: ${otp}. It expires in 10 minutes.`,
+  });
+}
 
 // POST /auth/register
 router.post('/register', async (req, res) => {
@@ -25,27 +51,53 @@ router.post('/register', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     const result = await registerNewMember(email, hashedPassword);
     const member = result.member;
-    const amount = result.amountToPay;
 
-    // Stripe-only flow: no Paystack transaction here
+    // Send the verification code immediately after DB insertion
+    await generateAndSendOTP(member.id, member.email);
+
     res.status(201).json({
-      member: {
-        id: member.id,
-        email: member.email,
-        membership_active: member.membership_active,
-        profile_complete: member.profile_photo_url ? true : false,
-        payment_complete: member.membership_active,
-      },
-      amountToPay: amount,
-      paymentRequired: true
+      message: 'Registration successful. Verification code sent to email.',
+      memberId: member.id,
+      email: member.email,
+      isVerified: false
     });
-
   } catch (error: any) {
     if (error.code === '23505') {
       return res.status(409).json({ error: 'Email already registered' });
     }
-    console.error(error);
+    console.error('[Auth] Registration error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /auth/verify-otp
+router.post('/verify-otp', async (req, res) => {
+  const { email, otp } = req.body;
+  if (!email || !otp) {
+    return res.status(400).json({ error: 'Email and OTP are required' });
+  }
+
+  try {
+    const result = await db.query(
+      `SELECT * FROM otp_verifications 
+       WHERE email = $1 AND otp_code = $2 AND expires_at > NOW()`,
+      [email, otp]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or expired code' });
+    }
+
+    // 1. Mark member as verified in the members table
+    await db.query('UPDATE members SET is_verified = true WHERE email = $1', [email]);
+    
+    // 2. Clean up: Delete the used OTP record
+    await db.query('DELETE FROM otp_verifications WHERE email = $1', [email]);
+
+    res.json({ success: true, message: 'Email verified successfully!' });
+  } catch (error) {
+    console.error('[Auth] Verification error:', error);
+    res.status(500).json({ error: 'Verification failed' });
   }
 });
 
@@ -59,6 +111,7 @@ router.post('/login', async (req, res) => {
   try {
     const result = await db.query('SELECT * FROM members WHERE email = $1', [email]);
     const member = result.rows[0];
+    
     if (!member) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -66,6 +119,15 @@ router.post('/login', async (req, res) => {
     const valid = await bcrypt.compare(password, member.password_hash);
     if (!valid) {
       return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Check if the user has verified their email
+    if (!member.is_verified) {
+      return res.status(403).json({ 
+        error: 'Email not verified', 
+        isVerified: false,
+        memberId: member.id 
+      });
     }
 
     const token = jwt.sign(
@@ -80,25 +142,18 @@ router.post('/login', async (req, res) => {
         id: member.id,
         email: member.email,
         membership_active: member.membership_active,
-        profile_complete: member.profile_photo_url ? true : false,
-        payment_complete: member.membership_active,
+        is_verified: member.is_verified
       },
     });
   } catch (error) {
-    console.error(error);
+    console.error('[Auth] Login error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// POST /auth/register-token
-router.post('/register-token', authenticate, async (req: AuthRequest, res) => {
-  const { fcmToken } = req.body;
-  const memberId = req.user.id;
-  if (!fcmToken) {
-    return res.status(400).json({ error: 'Token required' });
-  }
-  await db.query('UPDATE members SET fcm_token = $1 WHERE id = $2', [fcmToken, memberId]);
-  res.json({ success: true });
+// POST /auth/ping – simple health check
+router.post('/ping', (req, res) => {
+  res.json({ message: 'pong' });
 });
 
 export default router;
