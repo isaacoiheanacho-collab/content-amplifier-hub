@@ -8,13 +8,17 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 
-// Configure the email sender using your Gmail App Password from Render env
+// 1. Updated Transporter with explicit host and security settings
 const transporter = nodemailer.createTransport({
   service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true, // Use SSL for port 465
   auth: {
     user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
+    pass: process.env.EMAIL_PASS, // Your 16-character app password: tnlkezctuogmmdbi
   },
+  connectionTimeout: 10000, // 10 seconds timeout for the SMTP handshake
 });
 
 // Helper: Generate, Save to DB, and Send OTP via Email
@@ -25,7 +29,7 @@ async function generateAndSendOTP(memberId: number, email: string) {
   // Clear any existing OTPs for this member to prevent confusion
   await db.query('DELETE FROM otp_verifications WHERE member_id = $1', [memberId]);
 
-  // Save the fresh OTP to your new separate table
+  // Save the fresh OTP to the database
   await db.query(
     'INSERT INTO otp_verifications (member_id, email, otp_code, expires_at) VALUES ($1, $2, $3, $4)',
     [memberId, email, otp, expiresAt]
@@ -52,8 +56,10 @@ router.post('/register', async (req, res) => {
     const result = await registerNewMember(email, hashedPassword);
     const member = result.member;
 
-    // Send the verification code immediately after DB insertion
-    await generateAndSendOTP(member.id, member.email);
+    // Send code: Fire and forget (don't await) to respond to client immediately
+    generateAndSendOTP(member.id, member.email).catch(err => 
+      console.error('[Email Error] Background send failed:', err)
+    );
 
     res.status(201).json({
       message: 'Registration successful. Verification code sent to email.',
@@ -88,10 +94,10 @@ router.post('/verify-otp', async (req, res) => {
       return res.status(400).json({ error: 'Invalid or expired code' });
     }
 
-    // 1. Mark member as verified in the members table
+    // 1. Mark member as verified
     await db.query('UPDATE members SET is_verified = true WHERE email = $1', [email]);
     
-    // 2. Clean up: Delete the used OTP record
+    // 2. Clean up
     await db.query('DELETE FROM otp_verifications WHERE email = $1', [email]);
 
     res.json({ success: true, message: 'Email verified successfully!' });
@@ -121,20 +127,22 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // --- CORRECTION: BLOCK TOKEN GENERATION IF NOT VERIFIED ---
+    // BLOCK LOGIN IF NOT VERIFIED
     if (!member.is_verified) {
-      // Automatically resend OTP so the user has a fresh code to use
-      await generateAndSendOTP(member.id, member.email);
+      // Fire and forget: Respond to Flutter immediately while email sends in background
+      generateAndSendOTP(member.id, member.email).catch(err => 
+        console.error('[Email Error] Background resend failed:', err)
+      );
 
       return res.status(403).json({ 
         error: 'Email not verified', 
+        needsVerification: true, // Used by AuthService.dart logic
         isVerified: false,
-        email: member.email, // Passing email for the Frontend navigation
+        email: member.email,
         memberId: member.id 
       });
     }
 
-    // Only issue token if verification is passed
     const token = jwt.sign(
       { id: member.id, email: member.email },
       process.env.JWT_SECRET!,
@@ -148,7 +156,6 @@ router.post('/login', async (req, res) => {
         email: member.email,
         membership_active: member.membership_active,
         is_verified: member.is_verified,
-        // Ensure profile_complete is returned so Flutter knows which screen to show
         profile_complete: member.profile_complete || false 
       },
     });
