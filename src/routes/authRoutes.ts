@@ -121,15 +121,20 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Check if the user has verified their email
+    // --- CORRECTION: BLOCK TOKEN GENERATION IF NOT VERIFIED ---
     if (!member.is_verified) {
+      // Automatically resend OTP so the user has a fresh code to use
+      await generateAndSendOTP(member.id, member.email);
+
       return res.status(403).json({ 
         error: 'Email not verified', 
         isVerified: false,
+        email: member.email, // Passing email for the Frontend navigation
         memberId: member.id 
       });
     }
 
+    // Only issue token if verification is passed
     const token = jwt.sign(
       { id: member.id, email: member.email },
       process.env.JWT_SECRET!,
@@ -142,7 +147,9 @@ router.post('/login', async (req, res) => {
         id: member.id,
         email: member.email,
         membership_active: member.membership_active,
-        is_verified: member.is_verified
+        is_verified: member.is_verified,
+        // Ensure profile_complete is returned so Flutter knows which screen to show
+        profile_complete: member.profile_complete || false 
       },
     });
   } catch (error) {
@@ -151,7 +158,6 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// POST /auth/ping – simple health check
 router.post('/ping', (req, res) => {
   res.json({ message: 'pong' });
 });
