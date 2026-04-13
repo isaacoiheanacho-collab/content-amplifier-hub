@@ -94,13 +94,38 @@ router.post('/verify-otp', async (req, res) => {
       return res.status(400).json({ error: 'Invalid or expired code' });
     }
 
-    // 1. Mark member as verified
-    await db.query('UPDATE members SET is_verified = true WHERE email = $1', [email]);
+    // 1. Mark member as verified and get the full member record
+    const memberResult = await db.query(
+      'UPDATE members SET is_verified = true WHERE email = $1 RETURNING *', 
+      [email]
+    );
+    const member = memberResult.rows[0];
     
-    // 2. Clean up
+    // 2. Clean up OTP
     await db.query('DELETE FROM otp_verifications WHERE email = $1', [email]);
 
-    res.json({ success: true, message: 'Email verified successfully!' });
+    // 3. AUTO-LOGIN logic: Generate token immediately
+    const token = jwt.sign(
+      { id: member.id, email: member.email },
+      process.env.JWT_SECRET!,
+      { expiresIn: '30d' }
+    );
+
+    res.json({ 
+      success: true, 
+      message: 'Email verified successfully!',
+      token, // Return token so frontend can log user in immediately
+      member: {
+        id: member.id,
+        email: member.email,
+        membership_active: member.membership_active,
+        is_verified: member.is_verified,
+        profile_complete: member.profile_complete || false,
+        full_name: member.full_name,
+        country: member.country,
+        state_region: member.state_region
+      }
+    });
   } catch (error) {
     console.error('[Auth] Verification error:', error);
     res.status(500).json({ error: 'Verification failed' });
@@ -129,14 +154,13 @@ router.post('/login', async (req, res) => {
 
     // BLOCK LOGIN IF NOT VERIFIED
     if (!member.is_verified) {
-      // Fire and forget: Respond to Flutter immediately while email sends in background
       generateAndSendOTP(member.id, member.email).catch(err => 
         console.error('[Email Error] Background resend failed:', err)
       );
 
       return res.status(403).json({ 
         error: 'Email not verified', 
-        needsVerification: true, // Used by AuthService.dart logic
+        needsVerification: true, 
         isVerified: false,
         email: member.email,
         memberId: member.id 
@@ -156,7 +180,10 @@ router.post('/login', async (req, res) => {
         email: member.email,
         membership_active: member.membership_active,
         is_verified: member.is_verified,
-        profile_complete: member.profile_complete || false 
+        profile_complete: member.profile_complete || false,
+        full_name: member.full_name,
+        country: member.country,
+        state_region: member.state_region
       },
     });
   } catch (error) {
