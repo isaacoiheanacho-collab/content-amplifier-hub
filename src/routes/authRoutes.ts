@@ -16,9 +16,9 @@ const transporter = nodemailer.createTransport({
   secure: true, // Use SSL for port 465
   auth: {
     user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS, // Your 16-character app password: tnlkezctuogmmdbi
+    pass: process.env.EMAIL_PASS,
   },
-  connectionTimeout: 10000, // 10 seconds timeout for the SMTP handshake
+  connectionTimeout: 10000,
 });
 
 // Helper: Generate, Save to DB, and Send OTP via Email
@@ -26,16 +26,13 @@ async function generateAndSendOTP(memberId: number, email: string) {
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   const expiresAt = new Date(Date.now() + 10 * 60000); // 10 min expiry
 
-  // Clear any existing OTPs for this member to prevent confusion
   await db.query('DELETE FROM otp_verifications WHERE member_id = $1', [memberId]);
 
-  // Save the fresh OTP to the database
   await db.query(
     'INSERT INTO otp_verifications (member_id, email, otp_code, expires_at) VALUES ($1, $2, $3, $4)',
     [memberId, email, otp, expiresAt]
   );
 
-  // Trigger the email
   await transporter.sendMail({
     from: `"Content Amplifier Hub" <${process.env.EMAIL_USER}>`,
     to: email,
@@ -56,7 +53,6 @@ router.post('/register', async (req, res) => {
     const result = await registerNewMember(email, hashedPassword);
     const member = result.member;
 
-    // Send code: Fire and forget (don't await) to respond to client immediately
     generateAndSendOTP(member.id, member.email).catch(err => 
       console.error('[Email Error] Background send failed:', err)
     );
@@ -111,10 +107,11 @@ router.post('/verify-otp', async (req, res) => {
       { expiresIn: '30d' }
     );
 
+    // FIX: Include region field for Flutter Member model
     res.json({ 
       success: true, 
       message: 'Email verified successfully!',
-      token, // Return token so frontend can log user in immediately
+      token,
       member: {
         id: member.id,
         email: member.email,
@@ -122,6 +119,7 @@ router.post('/verify-otp', async (req, res) => {
         is_verified: member.is_verified,
         profile_complete: member.profile_complete || false,
         full_name: member.full_name,
+        region: member.region,               // <-- ADDED
         country: member.country,
         state_region: member.state_region
       }
@@ -173,6 +171,7 @@ router.post('/login', async (req, res) => {
       { expiresIn: '30d' }
     );
 
+    // FIX: Include region field for Flutter Member model
     res.json({
       token,
       member: {
@@ -182,6 +181,7 @@ router.post('/login', async (req, res) => {
         is_verified: member.is_verified,
         profile_complete: member.profile_complete || false,
         full_name: member.full_name,
+        region: member.region,               // <-- ADDED
         country: member.country,
         state_region: member.state_region
       },
