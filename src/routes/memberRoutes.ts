@@ -97,7 +97,7 @@ router.get('/boosts', authenticate, async (req: AuthRequest, res) => {
 
 /**
  * GET /member/profile
- * FIXED: Now returns profile_complete so the app knows if profile setup is done.
+ * Now returns profile_complete so the app knows if profile setup is done.
  */
 router.get('/profile', authenticate, async (req: AuthRequest, res) => {
     const memberId = req.user.id;
@@ -106,7 +106,7 @@ router.get('/profile', authenticate, async (req: AuthRequest, res) => {
         `SELECT email, name, phone, region, profile_photo_url,
                 youtube_url, facebook_url, tiktok_url,
                 membership_active, monthly_boosts_used, supports_given,
-                profile_complete   -- <-- ADDED
+                profile_complete
          FROM members WHERE id = $1`,
         [memberId]
     );
@@ -130,7 +130,7 @@ router.get('/profile', authenticate, async (req: AuthRequest, res) => {
 
 /**
  * POST /member/profile/update
- * UPDATED: Now sets profile_complete = true upon successful update.
+ * Sets profile_complete = true after a successful update.
  */
 router.post('/profile/update', authenticate, upload.single('photo'), async (req: AuthRequest, res) => {
     const memberId = req.user.id;
@@ -163,7 +163,6 @@ router.post('/profile/update', authenticate, upload.single('photo'), async (req:
             finalPhotoUrl = await uploadPromise;
         }
 
-        // Critical fix: set profile_complete = true
         await db.query(
             `UPDATE members 
              SET name = $1, 
@@ -225,4 +224,4 @@ router.post('/payment-url', authenticate, async (req: AuthRequest, res) => {
     }
 });
 
-export default router;s
+export default router;
