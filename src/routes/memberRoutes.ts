@@ -128,6 +128,7 @@ router.get('/profile', authenticate, async (req: AuthRequest, res) => {
 
 /**
  * POST /member/profile/update
+ * UPDATED: Now sets profile_complete to true upon successful update.
  */
 router.post('/profile/update', authenticate, upload.single('photo'), async (req: AuthRequest, res) => {
     const memberId = req.user.id;
@@ -160,10 +161,17 @@ router.post('/profile/update', authenticate, upload.single('photo'), async (req:
             finalPhotoUrl = await uploadPromise;
         }
 
+        // The critical update: setting profile_complete = true
         await db.query(
             `UPDATE members 
-             SET name = $1, phone = $2, region = $3, profile_photo_url = $4,
-                 youtube_url = $5, facebook_url = $6, tiktok_url = $7
+             SET name = $1, 
+                 phone = $2, 
+                 region = $3, 
+                 profile_photo_url = $4,
+                 youtube_url = $5, 
+                 facebook_url = $6, 
+                 tiktok_url = $7,
+                 profile_complete = true 
              WHERE id = $8`,
             [
                 name, 
