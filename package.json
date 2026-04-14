@@ -27,6 +27,7 @@
     "nodemailer": "^8.0.5",
     "paystack": "^2.0.1",
     "pg": "^8.11.0",
+    "resend": "^6.11.0",
     "stripe": "^22.0.1"
   },
   "devDependencies": {
