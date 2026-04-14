@@ -191,6 +191,16 @@ router.post('/login', async (req, res) => {
   }
 });
 
+// POST /auth/set-member-type
+router.post('/set-member-type', authenticate, async (req: AuthRequest, res) => {
+    const { memberType } = req.body;
+    if (!['creator', 'support'].includes(memberType)) {
+        return res.status(400).json({ error: 'Invalid member type' });
+    }
+    await db.query('UPDATE members SET member_type = $1 WHERE id = $2', [memberType, req.user.id]);
+    res.json({ success: true });
+});
+
 router.post('/ping', (req, res) => {
   res.json({ message: 'pong' });
 });

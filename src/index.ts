@@ -3,6 +3,7 @@ import * as dotenv from 'dotenv';
 import boostRoutes from './routes/boostRoutes';
 import authRoutes from './routes/authRoutes';
 import memberRoutes from './routes/memberRoutes';
+import supportRoutes from './routes/supportRoutes';   // <-- ADDED
 import testStripe from './routes/testStripe';
 import stripeWebhook from './routes/stripeWebhook';
 import './services/hourlyEngine';
@@ -38,6 +39,7 @@ app.get('/', (req, res) => {
 app.use('/auth', authRoutes);
 app.use('/boosts', boostRoutes);
 app.use('/member', memberRoutes);
+app.use('/support', supportRoutes);      // <-- ADDED
 app.use('/test', testStripe);
 
 app.listen(PORT, () => {
