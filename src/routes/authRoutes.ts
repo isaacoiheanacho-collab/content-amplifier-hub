@@ -1,44 +1,48 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import { registerNewMember } from '../services/memberService';
 import { db } from '../models/db';
 import { authenticate, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 
-// 1. Updated Transporter with explicit host and security settings
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  host: 'smtp.gmail.com',
-  port: 465,
-  secure: true, // Use SSL for port 465
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  connectionTimeout: 10000,
-});
+// Initialize Resend with your API key
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-// Helper: Generate, Save to DB, and Send OTP via Email
+// Helper: Generate, Save to DB, and Send OTP via Resend
 async function generateAndSendOTP(memberId: number, email: string) {
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   const expiresAt = new Date(Date.now() + 10 * 60000); // 10 min expiry
 
+  // Clear any existing OTPs for this member
   await db.query('DELETE FROM otp_verifications WHERE member_id = $1', [memberId]);
 
+  // Save the fresh OTP to the database
   await db.query(
     'INSERT INTO otp_verifications (member_id, email, otp_code, expires_at) VALUES ($1, $2, $3, $4)',
     [memberId, email, otp, expiresAt]
   );
 
-  await transporter.sendMail({
-    from: `"Content Amplifier Hub" <${process.env.EMAIL_USER}>`,
-    to: email,
-    subject: "Your Verification Code",
-    text: `Your verification code is: ${otp}. It expires in 10 minutes.`,
-  });
+  // Send email via Resend
+  try {
+    const { data, error } = await resend.emails.send({
+      from: 'onboarding@resend.dev',
+      to: [email],
+      subject: 'Your Verification Code',
+      html: `<p>Your verification code is: <strong>${otp}</strong></p>
+             <p>It expires in 10 minutes.</p>`,
+    });
+
+    if (error) {
+      console.error('[Resend] Failed to send email:', error);
+    } else {
+      console.log('[Resend] Email sent successfully:', data);
+    }
+  } catch (err) {
+    console.error('[Resend] Exception:', err);
+  }
 }
 
 // POST /auth/register
@@ -53,8 +57,9 @@ router.post('/register', async (req, res) => {
     const result = await registerNewMember(email, hashedPassword);
     const member = result.member;
 
-    generateAndSendOTP(member.id, member.email).catch(err => 
-      console.error('[Email Error] Background send failed:', err)
+    // Send OTP (fire and forget)
+    generateAndSendOTP(member.id, member.email).catch(err =>
+      console.error('[OTP Error] Background send failed:', err)
     );
 
     res.status(201).json({
@@ -72,7 +77,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// POST /auth/verify-otp
+// POST /auth/verify-otp (unchanged)
 router.post('/verify-otp', async (req, res) => {
   const { email, otp } = req.body;
   if (!email || !otp) {
@@ -90,26 +95,22 @@ router.post('/verify-otp', async (req, res) => {
       return res.status(400).json({ error: 'Invalid or expired code' });
     }
 
-    // 1. Mark member as verified and get the full member record
     const memberResult = await db.query(
-      'UPDATE members SET is_verified = true WHERE email = $1 RETURNING *', 
+      'UPDATE members SET is_verified = true WHERE email = $1 RETURNING *',
       [email]
     );
     const member = memberResult.rows[0];
-    
-    // 2. Clean up OTP
+
     await db.query('DELETE FROM otp_verifications WHERE email = $1', [email]);
 
-    // 3. AUTO-LOGIN logic: Generate token immediately
     const token = jwt.sign(
       { id: member.id, email: member.email },
       process.env.JWT_SECRET!,
       { expiresIn: '30d' }
     );
 
-    // FIX: Include region field for Flutter Member model
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Email verified successfully!',
       token,
       member: {
@@ -119,7 +120,7 @@ router.post('/verify-otp', async (req, res) => {
         is_verified: member.is_verified,
         profile_complete: member.profile_complete || false,
         full_name: member.full_name,
-        region: member.region,               // <-- ADDED
+        region: member.region,
         country: member.country,
         state_region: member.state_region
       }
@@ -130,7 +131,7 @@ router.post('/verify-otp', async (req, res) => {
   }
 });
 
-// POST /auth/login
+// POST /auth/login (unchanged except Resend for resending OTP)
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
@@ -140,7 +141,7 @@ router.post('/login', async (req, res) => {
   try {
     const result = await db.query('SELECT * FROM members WHERE email = $1', [email]);
     const member = result.rows[0];
-    
+
     if (!member) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -150,18 +151,17 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // BLOCK LOGIN IF NOT VERIFIED
     if (!member.is_verified) {
-      generateAndSendOTP(member.id, member.email).catch(err => 
+      generateAndSendOTP(member.id, member.email).catch(err =>
         console.error('[Email Error] Background resend failed:', err)
       );
 
-      return res.status(403).json({ 
-        error: 'Email not verified', 
-        needsVerification: true, 
+      return res.status(403).json({
+        error: 'Email not verified',
+        needsVerification: true,
         isVerified: false,
         email: member.email,
-        memberId: member.id 
+        memberId: member.id
       });
     }
 
@@ -171,7 +171,6 @@ router.post('/login', async (req, res) => {
       { expiresIn: '30d' }
     );
 
-    // FIX: Include region field for Flutter Member model
     res.json({
       token,
       member: {
@@ -181,7 +180,7 @@ router.post('/login', async (req, res) => {
         is_verified: member.is_verified,
         profile_complete: member.profile_complete || false,
         full_name: member.full_name,
-        region: member.region,               // <-- ADDED
+        region: member.region,
         country: member.country,
         state_region: member.state_region
       },
