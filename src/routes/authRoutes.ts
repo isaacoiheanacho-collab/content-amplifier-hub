@@ -77,7 +77,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// POST /auth/verify-otp (unchanged)
+// POST /auth/verify-otp
 router.post('/verify-otp', async (req, res) => {
   const { email, otp } = req.body;
   if (!email || !otp) {
@@ -122,7 +122,8 @@ router.post('/verify-otp', async (req, res) => {
         full_name: member.full_name,
         region: member.region,
         country: member.country,
-        state_region: member.state_region
+        state_region: member.state_region,
+        member_type: member.member_type,   // ✅ ADDED
       }
     });
   } catch (error) {
@@ -131,7 +132,7 @@ router.post('/verify-otp', async (req, res) => {
   }
 });
 
-// POST /auth/login (unchanged except Resend for resending OTP)
+// POST /auth/login
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
@@ -182,7 +183,8 @@ router.post('/login', async (req, res) => {
         full_name: member.full_name,
         region: member.region,
         country: member.country,
-        state_region: member.state_region
+        state_region: member.state_region,
+        member_type: member.member_type,   // ✅ ADDED
       },
     });
   } catch (error) {
